@@ -1,0 +1,42 @@
+# Font settings
+font.family: sans-serif
+font.sans-serif: Helvetica
+font.size: 16
+pdf.fonttype: 42
+
+# Text settings
+text.usetex: True
+
+# Figure settings
+figure.dpi: 300
+figure.figsize: 8, 6
+
+# Axes settings
+axes.labelsize: 16
+axes.grid: True
+axes.grid.which: major
+axes.spines.top: False
+axes.spines.right: False
+
+# Line settings
+lines.linewidth: 2.3
+
+# Grid settings
+grid.linewidth: 0.5
+grid.alpha: 0.3
+
+# Tick settings
+xtick.labelsize: 16
+ytick.labelsize: 16
+xtick.major.size: 6
+ytick.major.size: 6
+xtick.minor.size: 3
+ytick.minor.size: 3
+
+# Legend settings
+legend.fontsize: 14
+legend.frameon: False
+
+# Export settings
+savefig.bbox: tight
+savefig.pad_inches: 0.1

@@ -105,6 +105,7 @@ class UMPCDataBuffer():
             'cum_energy': [],
             'da_price': [],
             'objective': [],
+            'opt_time_umpc': []
         }
 
     def initialize(self, entry_dict):

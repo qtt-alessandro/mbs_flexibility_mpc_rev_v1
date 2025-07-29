@@ -153,7 +153,7 @@ class LMPCDataBuffer:
     def __init__(self):
         # Change or extend keys as needed:
         self.data = {
-            'time': [],
+            'time_utc': [],
             'qout': [],
             'qin': [],
             'u1': [],
@@ -171,7 +171,7 @@ class LMPCDataBuffer:
 
     def initialize(self):
         self.data = {
-                        "time": [np.nan, np.nan, np.nan],
+                        "time_utc": [np.nan, np.nan, np.nan],
                         "u1": [800, 800, 800],
                         "u2": [0, 0, 0],
                         "u3": [0, 0, 0],
@@ -192,7 +192,7 @@ class LMPCDataBuffer:
                 val = val.item()
             self.data[key].append(val)
 
-    def to_dataframe(self):
+    def to_dataframe(self, save=False, file_path=None):
         n = 3
         for k, v in self.data.items():
             try:
@@ -200,6 +200,9 @@ class LMPCDataBuffer:
             except Exception:
                 pass
         self.data = {k: v[n:] for k, v in self.data.items()}
-        return pl.DataFrame(self.data)
+        df = pl.DataFrame(self.data)
+        if save:
+            df.write_parquet(file_path)
+        return df
 
         

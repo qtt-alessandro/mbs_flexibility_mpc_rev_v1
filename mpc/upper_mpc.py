@@ -119,5 +119,8 @@ class UMPCDataBuffer():
                 val = val.item()
             self.data[key].append(val)
 
-    def to_dataframe(self):
-        return pl.DataFrame(self.data)
+    def to_dataframe(self, save=False, file_path=None):
+        df = pl.DataFrame(self.data)
+        if save:
+            df.write_parquet(file_path)
+        return df

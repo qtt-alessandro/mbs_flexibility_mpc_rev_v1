@@ -1,18 +1,11 @@
 import casadi as ca 
 import numpy as np
+import polars as pl 
 
-def step_upper_level(horizon, prices_values,co2_values,  inflow_values, h_init, energy_init, Qout_init, trigger_values, w1, w2):
-    
-    breakpoints = [0, 30, 80]
-    slopes = [4.82246804, 14.86423641]
-    intercepts = [-18.62012472, -319.87317564]
-    
-    breakpoints = [0, 11, 30, 80]
-    slopes = [1.23892075, 6.27193941, 14.6711783]
-    intercepts = [0, -55.6090746, -307.586241]
-    
-    
-    # Solver options
+def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_init, energy_init, Qout_init):
+
+    opti = ca.Opti()
+
     p_opts = {
         "expand":True,
         "print_time": 0,
@@ -22,89 +15,48 @@ def step_upper_level(horizon, prices_values,co2_values,  inflow_values, h_init, 
     s_opts = {
         'max_iter':1000,
         "print_level":0, 
-        "warm_start_init_point": "yes"        }
-
-    opti = ca.Opti()
-
+        "warm_start_init_point": "yes"}
+    
     opti.solver("ipopt",p_opts,s_opts)
 
     ### Parameters
-    prices = opti.parameter(horizon)
-    co2_prices = opti.parameter(horizon)
+    da_prices = opti.parameter(horizon)
+    co2_progn = opti.parameter(horizon)
     Qin_forecast = opti.parameter(horizon)
-    trigger = opti.parameter(3)
-    #inflows_values = opti.parameter(horizon)
-    # MPC Variables 
-    energy = opti.variable(3, horizon)
+    energy = opti.variable(horizon)
     Qout = opti.variable(horizon)
     height = opti.variable(horizon)
     s_h = opti.variable(horizon)
-    energy_cost = opti.variable(horizon+1)
-    co2_cost = opti.variable(horizon+1)
 
-    # Initial conditions
-    opti.set_initial(height[0], h_init)
-    opti.set_initial(energy[:, 0], energy_init)
-    opti.set_initial(Qout[0], Qout_init)
-    opti.set_initial(s_h,0)
     # set values is used only for paramters
-    opti.set_value(trigger, trigger_values)
-    opti.set_value(prices, prices_values)
-    opti.set_value(co2_prices, co2_values)
+    opti.set_value(da_prices, prices_values)
+    opti.set_value(co2_progn, co2_progn_values)
     opti.set_value(Qin_forecast, inflow_values)
-    opti.set_initial(energy_cost, 0)
-    opti.set_initial(co2_cost, 0)
+
+    opti.subject_to(height[0] == h_init)
+    opti.subject_to(Qout[0] == Qout_init)
+    opti.subject_to(energy[0] == energy_init)
+    
+
 
 
     objective = 0
-    for t in range(horizon):
+    for t in range(1, horizon):
        
-        objective += (  w1*(prices[t] * (energy[0, t] + energy[1, t] + energy[2, t]))
-                        + w2*(co2_prices[t] * (energy[0, t] + energy[1, t] + energy[2, t]))
-                        + 1e3*s_h[t]
-                        + 0.2* ((energy[:, t] - energy[:, t-1]).T @ (energy[:, t] - energy[:, t-1]))
-                        + 1*(ca.if_else(trigger[0] > 0, 0, energy[0, t])
-                                + ca.if_else(trigger[1] > 0, 0, energy[1, t])
-                                + ca.if_else(trigger[2] > 0, 0, energy[2, t])))
+        w1 = 1
+        w2 = 1e5
 
-        opti.subject_to(energy_cost[t+1] == w1*(prices[t] * (energy[0, t] + energy[1, t] + energy[2, t])))
-        opti.subject_to(co2_cost[t+1] == w2*(co2_prices[t] * (energy[0, t] + energy[1, t] + energy[2, t])))
+        objective +=  w1*(da_prices[t] * energy[t]) + w1*(co2_progn[t] * energy[t]) + w2*s_h[t] + 1e-3*(energy[t] - energy[t-1])**2
 
-
-        # Energy consumption vs outflow Model
-        opti.subject_to(Qout[t] ==  ca.if_else(
-                                energy[0,t] < breakpoints[1],
-                                slopes[0] * energy[0,t] + intercepts[0],
-                                ca.if_else(
-                                    energy[0,t] < breakpoints[2],
-                                    slopes[1] * energy[0,t] + intercepts[1],
-                                    slopes[2] * energy[0,t] + intercepts[2]
-                                )
-                            ) + ca.if_else(
-                                energy[1,t] < breakpoints[1],
-                                slopes[0] * energy[1,t] + intercepts[0],
-                                ca.if_else(
-                                    energy[1,t] < breakpoints[2],
-                                    slopes[1] * energy[1,t] + intercepts[1],
-                                    slopes[2] * energy[1,t] + intercepts[2]
-                                )
-                            )+ ca.if_else(
-                                energy[2,t] < breakpoints[1],
-                                slopes[0] * energy[2,t] + intercepts[0],
-                                ca.if_else(
-                                    energy[2,t-1] < breakpoints[2],
-                                    slopes[1] * energy[2,t] + intercepts[1],
-                                    slopes[2] * energy[2,t] + intercepts[2]
-                                )))
-        
-
-
+        #opti.subject_to(Qout[t] ==  2.107*energy[t] + 0.8032* Qout[t-1])
+        opti.subject_to(Qout[t] ==  4.64*energy[t] + 0.5336* Qout[t-1])
         opti.subject_to(height[t] == height[t-1] + (100/40)*(Qin_forecast[t] - Qout[t]))
-        opti.subject_to(energy[:, t] >= 0)
-        opti.subject_to(energy[:, t] <= 80)
-        opti.subject_to(Qout >= 0) 
-        opti.subject_to(height[t] <= (200 + s_h[t]))
-        opti.subject_to(height[t] >= (70 - s_h[t]))
+        opti.subject_to(energy[t] >= 0)
+        opti.subject_to(energy[t] <= 300)
+        opti.subject_to(Qout[t] >= 0) 
+        opti.subject_to(Qout[t] <= 1800) 
+        opti.subject_to(height[t] <= 200 + s_h[t])
+        opti.subject_to(height[t] >= 70  - s_h[t])
         opti.subject_to(s_h[t] >= 0)
         
 
@@ -113,14 +65,15 @@ def step_upper_level(horizon, prices_values,co2_values,  inflow_values, h_init, 
     try:
         sol = opti.solve()
 
-        return (
-            sol.value(Qout),
-            sol.value(height),
-            sol.value(energy), 
-            float(ca.sum1(sol.value(energy_cost))),
-            float(ca.sum1(sol.value(co2_cost))), 
-            float(sol.value(opti.f))
-        )
+        return {
+                "qout": round(sol.value(Qout[1]), 1),
+                "height_ref": round(sol.value(height[1]), 1),
+                "energy_ref": round(sol.value(energy[1]), 1),
+                "co2_progn": round(sol.value(co2_progn[1]), 4),
+                "da_price": round(sol.value(da_prices[1]), 4),
+                "qin": round(sol.value(Qin_forecast[1]), 1),
+                "objective": round(float(sol.value(opti.f)), 1),
+            }
     
     except Exception as e:
         print("Solver failed to find a solution.")
@@ -132,3 +85,38 @@ def step_upper_level(horizon, prices_values,co2_values,  inflow_values, h_init, 
         print("E:", opti.debug.value(energy))
         print("Objective value:", opti.debug.value(opti.f))
     
+
+class UMPCDataBuffer():
+
+    def __init__(self):
+        self.data = {
+            'time_utc':[],
+            'qout': [],
+            'qin': [],
+            'qin_q10' : [], 
+            'qin_q50' : [], 
+            'qin_q90' : [], 
+            'height_ref': [],
+            'energy_ref': [],
+            'co2_progn': [],
+            'da_price': [],
+            'objective': [],
+            'opt_time_umpc': []
+        }
+
+    def initialize(self, entry_dict):
+        for key in self.data:
+            self.data[key].append(entry_dict.get(key, None))
+
+    def update(self, entry_dict):
+        for key in self.data:
+            val = entry_dict.get(key, None)
+            if isinstance(val, np.generic):
+                val = val.item()
+            self.data[key].append(val)
+
+    def to_dataframe(self, save=False, file_path=None):
+        df = pl.DataFrame(self.data)
+        if save:
+            df.write_parquet(file_path)
+        return df

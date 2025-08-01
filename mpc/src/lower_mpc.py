@@ -32,8 +32,8 @@ def step_lower_mpc(Qin_est, Qout_meas, h_meas, w_meas, E_meas, P_meas, h_ref, tr
     B_power = np.array(models_coefficients["B_power"])
     C_power = np.array(models_coefficients["C_power"])
 
-    a1_qout = np.array([0.61253, 0.37483, 0.39917])
-    b1_qout = np.array([0.18918, 0.29009, 0.30895])
+    a1_qout = np.array([0.98, 0.98, 0.98])
+    b1_qout = np.array([0.00575, 0.00575, 0.00575])
 
     a1_power = np.array([0.62416, 0.62416, 0.62416])
     b1_power = np.array([0.01719, 0.01719, 0.01719])
@@ -79,9 +79,9 @@ def step_lower_mpc(Qin_est, Qout_meas, h_meas, w_meas, E_meas, P_meas, h_ref, tr
     # Objective function
     objective = 0   
 
-    w1 = 10
+    w1 = 20
     w2 = 5
-    w3 = 1
+    w3 = 50
     w4 = 10
     w5 = 1e3 
     for t in range(zs, N+zs):
@@ -120,6 +120,7 @@ def step_lower_mpc(Qin_est, Qout_meas, h_meas, w_meas, E_meas, P_meas, h_ref, tr
         opti.subject_to(P[t] <= 1)
         opti.subject_to(P[t] >= 0)
         opti.subject_to(Qout[t] >= 0)
+        opti.subject_to(Qout[t] <= 800)
         opti.subject_to(s_P[t] >= 0)
 
     # Initial conditions

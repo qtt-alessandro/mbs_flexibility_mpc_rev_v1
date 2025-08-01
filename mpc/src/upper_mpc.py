@@ -43,7 +43,7 @@ def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_
     objective = 0
     for t in range(1, horizon):
        
-        w1 = 1
+        w1 = 10
         w2 = 1e5
 
         objective +=  w1*(da_prices[t] * energy[t]) + w1*(co2_progn[t] * energy[t]) + w2*s_h[t] + 1e-3*(energy[t] - energy[t-1])**2
@@ -115,7 +115,9 @@ class UMPCDataBuffer():
                 val = val.item()
             self.data[key].append(val)
 
-    def to_dataframe(self, save=False, file_path=None):
+    def to_dataframe(self, save=False, file_path=None, skip_ini=False):
+        if skip_ini:
+            self.data = {k: v[1:] for k, v in self.data.items()}
         df = pl.DataFrame(self.data)
         if save:
             df.write_parquet(file_path)

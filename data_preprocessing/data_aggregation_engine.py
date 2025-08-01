@@ -2,6 +2,10 @@ import requests
 from datetime import datetime
 from entsoe import EntsoePandasClient
 import pandas as pd
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 def fetch_CO2_data(start_date: str, end_date: str, price_area: str, resample: bool):
     base_url = "https://api.energidataservice.dk/dataset/CO2EmisProg"
@@ -31,8 +35,8 @@ def fetch_CO2_data(start_date: str, end_date: str, price_area: str, resample: bo
 
 def fetch_day_ahead_prices(start_date: str, end_date: str, country_code: str):
     
-    key = ''
-    client = EntsoePandasClient(api_key=key)
+    entsoe_key = os.environ.get('ENTSOE_KEY')
+    client = EntsoePandasClient(api_key=entsoe_key)
     start = pd.Timestamp(start_date.replace("-", ""), tz='Europe/Copenhagen')
     end = pd.Timestamp(end_date.replace("-", ""), tz='Europe/Copenhagen')
     

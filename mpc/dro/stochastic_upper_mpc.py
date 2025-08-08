@@ -1,13 +1,10 @@
 import casadi as ca 
 import numpy as np
 import polars as pl 
+from typing import Optional, Dict, List, Any
+from typing import Optional
 np.set_printoptions(suppress=True, precision=1)
 
-
-import casadi as ca
-import numpy as np
-import polars as pl
-np.set_printoptions(suppress=True, precision=1)
 
 def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_init, energy_init, Qout_init, resid):
     opti = ca.Opti()
@@ -39,11 +36,7 @@ def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_
     energy = opti.variable( horizon)
     Qout = opti.variable(horizon)
     height = opti.variable(num_scenarios, horizon)
-    s_h = opti.variable(horizon)
 
-
-
-    # set values is used only for paramters
     opti.set_value(da_prices, prices_values)
     opti.set_value(co2_progn, co2_progn_values)
     opti.set_value(Qin_forecast, inflow_values)
@@ -56,62 +49,51 @@ def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_
     error_samples = np.random.normal(30, 2, 1)
     e_qin = opti.parameter(horizon)
     opti.set_value(e_qin, error_samples)
-    #volume_balance = opti.variable(horizon)
-
-    tvar = opti.variable()
-    lam  = opti.variable()
-    si   = opti.variable(num_scenarios, horizon)   # one per scenario
-    eta  = opti.variable(num_scenarios)   # one per scenario
-
-
-    e = -1
-    theta = 0.001
-    alpha = 0.05
-
-    opti.subject_to(si[:, 0] == 0)
-    #opti.subject_to(lam[0]==0)
-    #opti.subject_to(tvar[0]==0)
-    #opti.subject_to(volume_balance[0] == Qout[0] - Qin_forecast[0])
 
     objective = 0
 
-
     #resids = np.random.normal(30, 2, size=(num_scenarios, horizon))
-    resids = resid[:usable_length].reshape((num_scenarios, 24))
+    bootstrap_samples = np.random.choice(resid, size=usable_length, replace=True)
+    resids_bootstrap = resid[:usable_length].reshape((num_scenarios, 24))
 
-    #print(resids.shape)
-    for scenario in range(0,num_scenarios):
+    cvar_alpha = 0.95
+    epsilon = 0.001
 
-        for t in range(1, horizon):
-            w1 = 1000
-            w2 = 1e5
+    objective = 0  #
+    eta = opti.variable()              
+    s = opti.variable(num_scenarios, horizon)  # 2D: scenarios x time
 
-            objective +=  (da_prices[t] * energy[t]) + (co2_progn[t] * energy[t]) + 1e-3*(energy[t] - energy[t-1])**2
-            opti.subject_to(Qout[t] ==  4.64*energy[t] + 0.5336* Qout[t-1])
+    for t in range(1, horizon):
 
-            opti.subject_to(height[scenario, t] == height[scenario,t-1] - (100/40)*(Qout[t] - Qin_forecast[t] - resids[scenario, t]))
-            opti.subject_to(height[scenario,t] <= si[scenario, t] + t + 200)
-            opti.subject_to(energy[t] >= 0)
-            opti.subject_to(energy[t] <= 300)
-            opti.subject_to(Qout[t] >= 0) 
-            opti.subject_to(Qout[t] <= 1800) 
+        w1 = 1000
+        w2 = 10
 
-            opti.subject_to(lam >= 0)
-            opti.subject_to(tvar >= 0)
-        opti.subject_to(si[scenario] >= 0)
+        objective += w1*(da_prices[t] * energy[t]) 
+        objective += w1*(co2_progn[t] * energy[t]) 
 
-        opti.subject_to(lam * theta + (1/num_scenarios) * ca.sum1(si[:,t]) <= alpha * tvar)
+        opti.subject_to(Qout[t] ==  4.64*energy[t] + 0.5336* Qout[t-1])
+        opti.subject_to(energy[t] >= 0)
+        opti.subject_to(energy[t] <= 300)
+        opti.subject_to(Qout[t] >= 0)
+        opti.subject_to(Qout[t] <= 1800)
 
 
-    opti.minimize(objective/num_scenarios)
+        for scenario in range(num_scenarios):
+            objective += 1e-3*s[scenario, t-1] 
+            actual_inflow = Qin_forecast[t] 
+            delta_h = (100/40)*(Qout[t] - actual_inflow)
+            opti.subject_to(height[scenario, t] == height[scenario, t-1] + delta_h)
+            opti.subject_to(eta <= 10)  
+            opti.subject_to(height[scenario, t] >= 50)  
+            opti.subject_to(s[scenario, t-1] <= 200 - height[scenario, t])
+
+    # Now, the proper CVaR constraint:
+    opti.subject_to(eta + (1/(1-cvar_alpha)) * (1/num_scenarios) * ca.sum1(s) <= epsilon)
+
+    opti.minimize(objective / num_scenarios)
 
     try:
-        #print(np.round(opti.debug.value(resids[scenario, t]),1))  
         sol = opti.solve()
-
-        #print(opti.debug.value(lam * theta + (1/horizon) * ca.sum1(si)))  
-        #print(opti.debug.value((si[scenario, t]) / si.shape[1]))  
-        #print(opti.debug.value(tvar))  
 
         return {
                 "qout": round(sol.value(Qout[1]), 1),
@@ -134,16 +116,16 @@ def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_
         print("Objective value:", opti.debug.value(opti.f))
     
 
-class UMPCDataBuffer():
 
+class UMPCDataBuffer:
     def __init__(self):
         self.data = {
-            'time_utc':[],
+            'time_utc': [],
             'qout': [],
             'qin': [],
-            'qin_q10' : [], 
-            'qin_q50' : [], 
-            'qin_q90' : [], 
+            'qin_q10': [], 
+            'qin_q50': [], 
+            'qin_q90': [], 
             'height_ref': [],
             'energy_ref': [],
             'co2_progn': [],
@@ -152,21 +134,24 @@ class UMPCDataBuffer():
             'opt_time_umpc': []
         }
 
-    def initialize(self, entry_dict):
+    def initialize(self, entry_dict: Dict[str, Any]) -> None:
         for key in self.data:
             self.data[key].append(entry_dict.get(key, None))
 
-    def update(self, entry_dict):
+    def update(self, entry_dict: Dict[str, Any]) -> None:
         for key in self.data:
             val = entry_dict.get(key, None)
             if isinstance(val, np.generic):
                 val = val.item()
             self.data[key].append(val)
 
-    def to_dataframe(self, save=False, file_path=None, skip_ini=False):
+    def to_dataframe(self, save: bool = False, file_path: Optional[str] = None, skip_ini: bool = False) -> pl.DataFrame:
         if skip_ini:
             self.data = {k: v[1:] for k, v in self.data.items()}
         df = pl.DataFrame(self.data)
         if save:
+            if file_path is None:
+                raise ValueError("file_path must be provided when save=True")
             df.write_parquet(file_path)
         return df
+        

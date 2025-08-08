@@ -8,88 +8,80 @@ from scipy import stats
 np.set_printoptions(suppress=True, precision=1)
 
 
-def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_ini, energy_init, Qout_init, resid):
+def step_upper_level(horizon, prices_values, co2_progn_values, inflow_values, h_ini, energy_init, Qout_init, resid, num_scenarios,  cvar_alpha=None):
     
-    num_scenarios = resid.shape[0]//24
-    usable_length = num_scenarios * 24
-    resids_bootstrap = np.clip(resid[:usable_length], -100, 100)
-    bootstrap_samples = np.random.choice(resids_bootstrap, size=usable_length, replace=True).reshape((num_scenarios, 24))
-    resid = np.random.normal(0, 30, size=(num_scenarios, horizon))
-    #resid = np.clip(resid, -5, 10)
+    # Ensure numpy float arrays
+    prices_values = np.asarray(prices_values, dtype=float)
+    co2_progn_values = np.asarray(co2_progn_values, dtype=float)
+    inflow_values = np.asarray(inflow_values, dtype=float)
+    resid = np.asarray(resid, dtype=float)  # shape (num_scenarios, horizon)
+
+    assert resid.shape == (num_scenarios, horizon)
 
     energy = cp.Variable(horizon)
-    qout = cp.Variable(horizon)
+    qout   = cp.Variable(horizon)
     height = cp.Variable((num_scenarios, horizon))
-    tau = cp.Variable(horizon)
-    z = cp.Variable((num_scenarios, horizon))
-    z = cp.Variable((num_scenarios, horizon))
-    s_upper = cp.Variable(horizon, nonneg=True)
-    s_lower = cp.Variable(horizon, nonneg=True)
 
-    tau_lower = cp.Variable(horizon)
-    z_lower = cp.Variable((num_scenarios, horizon))
+    # CVaR variables (upper and lower sides)
+    tau_u  = cp.Variable(horizon)
+    tau_l  = cp.Variable(horizon)
+    z_u    = cp.Variable((num_scenarios, horizon))
+    z_l    = cp.Variable((num_scenarios, horizon))
 
-    cvar_alpha = 0.25
+    # Height relaxation (nonnegative)
+    epsilon_u = cp.Variable(horizon, nonneg=True)
+    epsilon_l = cp.Variable(horizon, nonneg=True)
 
-    constraints = [
-        qout >= 0, 
-        qout <= 4800, 
-        qout[0] == Qout_init, 
-        height[:, 0] == h_ini, 
-        energy[0] == energy_init,
-        energy >= 0, 
-        energy <= 300, 
-        qout[1:] == 10*energy[1:] #+ 0.5336*qout[:-1]
-]
+    cons = [
+        qout >= 0, qout <= 4800,
+        qout[0] == float(Qout_init),
+        height[:, 0] == float(h_ini),
+        energy[0] == float(energy_init),
+        energy >= 0, energy <= 3000,
+        qout[1:] == 10*energy[1:]
+    ]
+
+    fac = 1.0/((1.0 - float(cvar_alpha)) * float(num_scenarios))
+
     obj = 0
-
     for t in range(1, horizon):
-        stage_cost = (energy[t] * prices_values[t] + 
-                     energy[t] * co2_progn_values[t] + 
-                     1e-3 * (energy[t] - energy[t-1])**2)
-        obj += stage_cost
-
+        # Stage cost (adapt weight as needed)
+        obj += energy[t]*prices_values[t] + energy[t]*co2_progn_values[t] + 1e1*(energy[t] - energy[t-1])**2
 
         for s in range(num_scenarios):
-            constraints.append(height[s, t] == height[s, t-1] + (1/4)*(inflow_values[t] + bootstrap_samples[s, t] - qout[t]))
-            constraints.append(z[s, t] >= height[s, t] - 250 - tau[t])
-            constraints.append(z_lower[s, t] >= 20 - height[s, t] - tau_lower[t])
-            constraints.append(z_lower[s, t] >= 0)
-            constraints.append(z[s, t] >= 0)
+            cons += [
+                height[s, t] == height[s, t-1] + 0.5*(inflow_values[t] + resid[s, t] - qout[t]),
+                z_u[s, t] >= height[s, t] - 250 - tau_u[t],
+                z_u[s, t] >= 0,
+                z_l[s, t] >= 50 - height[s, t] - tau_l[t],
+                z_l[s, t] >= 0
+            ]
 
-        #constraints.append(
-        constraints.append(tau[t] + (1/cvar_alpha) * (1/num_scenarios) * cp.sum(z[:, t]) <= s_upper[t])
-        #constraints.append(
-        constraints.append(tau_lower[t] + (1/cvar_alpha) * (1/num_scenarios) * cp.sum(z_lower[:, t]) <= s_lower[t])
-    slack_penalty = 1000 * cp.sum(s_upper[1:] + s_lower[1:])  # High penalty weight
-    obj += slack_penalty
+        # Hard CVaR constraints (no epsilon)
+        cons += [
+            tau_u[t] + fac * cp.sum(z_u[:, t]) <= 10,
+            tau_l[t] + fac * cp.sum(z_l[:, t]) <= 10,
+        ]
 
-    # Modify the existing cvar_penalty line to include both upper and lower
-    #cvar_penalty = 1e4 * cp.sum([
-    #    tau[t] + (1/cvar_alpha) * (1/num_scenarios) * cp.sum(z[:, t]) + 
-    #    tau_lower[t] + (1/cvar_alpha) * (1/num_scenarios) * cp.sum(z_lower[:, t]) 
-    #    for t in range(1, horizon)])
-    #obj += cvar_penalty 
+    prob = cp.Problem(cp.Minimize(obj), cons)
+    prob.solve(solver=cp.MOSEK, verbose=False, warm_start=False)
 
-    prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve(cp.MOSEK, verbose=False, warm_start=True)
-    if prob.status == 'infeasible':
-        print("Problem is infeasible!")
-    # Debug constraints
-        for i, constr in enumerate(constraints):
-            if not constr.value():
-                print(f"Constraint {i} violated: {constr}")
-        return None 
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        print("Problem status:", prob.status)
+        return None
+
 
     return {
-        "qout": qout.value[1],
-        "height_ref": height.value[:, 1],
-        "energy_ref": energy.value[1],
-        "co2_progn": co2_progn_values[1],
-        "da_price": prices_values[1],
-        "qin": inflow_values[1],
-        "objective": obj.value,
+        "qout": qout.value[1].item(),
+        "height_ref_scen": height.value[:, 1].copy(),
+        "height_ref": float(np.mean(height.value[:, 1])),
+        "energy_ref": energy.value[1].item(),
+        "co2_progn": co2_progn_values[1].item(),
+        "da_price": prices_values[1].item(),
+        "qin": inflow_values[1].item(),
+        "objective": float(prob.value),
     }
+
 
 
 class UMPCDataBuffer:
@@ -102,6 +94,7 @@ class UMPCDataBuffer:
             'qin_q50': [], 
             'qin_q90': [], 
             'height_ref': [],
+            'height_ref_scen': [],
             'energy_ref': [],
             'co2_progn': [],
             'da_price': [],

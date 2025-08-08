@@ -1,5 +1,14 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "python-envs.pythonProjects": []
+    "python-envs.pythonProjects": [], 
+    "editor.semanticHighlighting.enabled": true,
+    "python.languageServer": "None",
+    "pyright.disableLanguageServices": false,
+    "pyright.useLibraryCodeForTypes": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportOptionalSubscript": "none"
+    }
+
 }
